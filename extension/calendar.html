@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kaashify</title>
+  <link rel="icon" href="icons/32.png">
+  <link rel="stylesheet" href="calendar.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand"><img src="icons/32.png" alt=""> Kaashify</div>
+    <nav class="views" role="tablist">
+      <button data-view="home">Today</button>
+      <button data-view="week">Week</button>
+      <button data-view="month">Month</button>
+      <button data-view="year">Year</button>
+      <button data-view="list">All upcoming</button>
+      <button data-view="pnl">P&amp;L</button>
+    </nav>
+    <div class="nav">
+      <button id="prev" aria-label="Previous">&#8249;</button>
+      <button id="today">Today</button>
+      <button id="next" aria-label="Next">&#8250;</button>
+      <h1 id="range"></h1>
+    </div>
+    <div class="tools">
+      <span id="sync" class="sync" hidden>Updating…</span>
+      <button id="theme" title="Toggle light / dark"></button>
+      <button id="settings" title="Settings">&#9881;</button>
+      <button id="x" class="embed-only" title="Close (Esc)">&times;</button>
+    </div>
+  </header>
+
+  <div id="summary" class="summary"></div>
+  <div id="status" class="status" hidden></div>
+  <main id="main"></main>
+  <footer class="foot"><button id="foot-settings" class="linkbtn">Settings</button> · <span id="ver"></span></footer>
+
+  <aside id="drawer" class="drawer" hidden>
+    <button id="close" class="close" aria-label="Close">&times;</button>
+    <div id="detail"></div>
+  </aside>
+
+  <script src="calendar.js"></script>
+</body>
+</html>

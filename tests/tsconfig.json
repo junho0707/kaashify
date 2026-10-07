@@ -1,0 +1,6 @@
+{
+  // Tests and e2e use the same settings, minus the strictest null/any checks: they're mostly mock objects.
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "noImplicitAny": false, "strictNullChecks": false },
+  "include": [".", "../e2e"]
+}

@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Kaashify",
+  "short_name": "Kaashify",
+  "version": "1.3.0",
+  "description": "Your Kalshi positions on a calendar, with realized P&L. Connects with your own Kalshi API key and only reads.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "Kaashify",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.elections.kalshi.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "calendar.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ],
+      "use_dynamic_url": true
+    }
+  ]
+}

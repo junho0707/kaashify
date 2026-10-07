@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest an idea
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like Kaashify to do?
+      description: The problem you're trying to solve, and how you picture it working.
+    validations:
+      required: true
