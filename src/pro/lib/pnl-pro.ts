@@ -1,14 +1,25 @@
-// Pro P&L analytics: the breakdown (combos by legs → sport, singles by sport → market kind), the trade table rows
+// P&L analytics: the breakdown (combos by legs → sport → leg-type mix and leg hit rates, singles by sport → market
+// kind, every trade in each group), the trade table rows
 // and their CSV export. Pure functions, no I/O. Analytics only; nothing here is a trading recommendation.
 
 import { categoryOf, seriesOf } from "../../lib/markets.ts";
 import { type Summary, inOut, summary } from "../../lib/pnl.ts";
 import type { Trade } from "../../lib/types.ts";
 
-/** Combo ticker → its legs' market tickers, once loaded (so combos can be split by size and sport). */
-export type ComboLegs = Map<string, string[]>;
+/** One combo leg: its market, the side picked and the market's result ("" until settled). */
+export interface ComboLeg { ticker: string; side?: string; result?: string }
+/** Combo ticker → its legs, once loaded (so combos can be split by size, sport and leg type). */
+export type ComboLegs = Map<string, ComboLeg[]>;
 export interface Group<K = string> extends Summary { key: K }
-export interface SportRow extends Group { worked: Group[]; didnt: Group[]; best: Trade | null; worst: Trade | null }
+/** Legs of one market kind across a group's combos: how many hit, missed or haven't settled. */
+export interface LegKind { key: string; hit: number; missed: number; open: number }
+export interface SportRow extends Group {
+  worked: Group[]; didnt: Group[]; best: Trade | null; worst: Trade | null;
+  /** Combos only: hit rate per leg kind, worst first. */
+  legKinds: LegKind[];
+  /** Every trade in the group, newest first. */
+  trades: Trade[];
+}
 export interface Breakdown extends Group { groups?: (Group & { sports: SportRow[] })[]; sports?: SportRow[] }
 
 export function groupBy<K>(trades: Trade[], keyOf: (t: Trade) => K | null | undefined): Group<K>[] {
@@ -32,8 +43,8 @@ const KINDS: [string, string][] = ([["1QSPREAD", "1st-quarter spread"], ["1QTOTA
   .sort((a, b) => b[0].length - a[0].length);
 
 const byPnl = (a: Group, b: Group) => b.pnl - a.pnl;
-const sportOfCombo = (legs: string[]) => {
-  const sports = [...new Set(legs.map(categoryOf))];
+const sportOfCombo = (legs: ComboLeg[]) => {
+  const sports = [...new Set(legs.map((l) => categoryOf(l.ticker)))];
   return sports.length === 1 ? sports[0] : "Mixed";
 };
 
@@ -50,15 +61,40 @@ export function kindOf(t: Pick<Trade, "ticker"> & { combo?: boolean }, comboLegs
   return `${s.slice(0, -k[0].length)} · ${k[1].toLowerCase()}`;
 }
 
-/** Per sport: totals, the market kinds that worked and didn't, and the best and worst trade. */
+/** A combo's leg-type mix, e.g. "MLB · winner + MLB · total ×2"; null before its legs load. */
+export function comboMix(t: Trade, comboLegs?: ComboLegs): string | null {
+  const legs = comboLegs?.get(t.ticker);
+  if (!legs?.length) return null;
+  const n = new Map<string, number>();
+  for (const l of legs) { const k = kindOf({ ticker: l.ticker }); n.set(k, (n.get(k) ?? 0) + 1); }
+  return [...n].sort((a, b) => a[0].localeCompare(b[0])).map(([k, c]) => (c > 1 ? `${k} ×${c}` : k)).join(" + ");
+}
+
+/** Per leg kind across these combos: legs that hit (result = side picked), missed, or are still open. Worst hit rate first. */
+export function legKinds(combos: Trade[], comboLegs?: ComboLegs): LegKind[] {
+  const m = new Map<string, LegKind>();
+  for (const t of combos) for (const l of comboLegs?.get(t.ticker) ?? []) {
+    const key = kindOf({ ticker: l.ticker });
+    const k = m.get(key) ?? { key, hit: 0, missed: 0, open: 0 };
+    if (l.result !== "yes" && l.result !== "no") k.open++;
+    else if (l.result === (l.side || "yes")) k.hit++;
+    else k.missed++;
+    m.set(key, k);
+  }
+  const rate = (k: LegKind) => (k.hit + k.missed ? k.hit / (k.hit + k.missed) : 1);
+  return [...m.values()].sort((a, b) => rate(a) - rate(b) || b.missed - a.missed || a.key.localeCompare(b.key));
+}
+
+/** Per sport: totals, the market kinds (combos: leg-type mixes) that worked and didn't, best/worst and every trade. */
 function sportRows(ts: Trade[], sportOf: (t: Trade) => string, comboLegs?: ComboLegs): SportRow[] {
   return groupBy(ts, sportOf).map((g) => {
     const mine = ts.filter((t) => sportOf(t) === g.key);
-    const kinds = groupBy(mine, (t) => kindOf(t, comboLegs)).sort(byPnl);
-    const ranked = [...mine].sort((a, b) => b.pnl - a.pnl);
     const combo = mine[0].combo;
-    return { ...g, worked: combo ? [] : kinds.filter((k) => k.pnl > 0), didnt: combo ? [] : kinds.filter((k) => k.pnl <= 0).reverse(),
-      best: ranked[0]?.pnl > 0 ? ranked[0] : null, worst: (ranked.at(-1)?.pnl ?? 0) < 0 ? ranked.at(-1)! : null };
+    const kinds = groupBy(mine, (t) => (combo ? comboMix(t, comboLegs) : kindOf(t, comboLegs))).sort(byPnl);
+    const ranked = [...mine].sort((a, b) => b.pnl - a.pnl);
+    return { ...g, worked: kinds.filter((k) => k.pnl > 0), didnt: kinds.filter((k) => k.pnl <= 0).reverse(),
+      best: ranked[0]?.pnl > 0 ? ranked[0] : null, worst: (ranked.at(-1)?.pnl ?? 0) < 0 ? ranked.at(-1)! : null,
+      legKinds: combo ? legKinds(mine, comboLegs) : [], trades: [...mine].sort((a, b) => b.closedAt - a.closedAt) };
   }).sort(byPnl);
 }
 

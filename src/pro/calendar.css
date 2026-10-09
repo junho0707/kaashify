@@ -24,6 +24,8 @@
 .cat-body li .k { flex: 1; min-width: 0; }
 .cat-body li .sub { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .cat-body li b { white-space: nowrap; }
+.cat-body .all-trades { margin-top: 8px; }
+.cat-body .all-trades > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 @media (max-width: 560px) { .cat > summary { grid-template-columns: 1fr auto; } .cat .meter, .cat > summary .sub { display: none; } }
 .pnl-sec h3 #pnl-export { float: right; text-transform: none; letter-spacing: 0; font-size: 12px; }
 .trades > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 2px 0; }

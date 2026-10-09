@@ -6,12 +6,18 @@ import { CSV } from "../export-csv.ts";
 
 test("breakdown: combos by legs then sport, singles by sport, with average return", () => {
   const t = parseExport(CSV);
-  const legs = new Map([["KXMVECROSSCATEGORY-S1-A", ["KXNFLGAME-X-KC", "KXMLBGAME-Y-LAD", "KXNFLSPREAD-X-KC3"]],
-    ["KXMVECROSSCATEGORY-S1-B", ["KXNFLGAME-Z-KC", "KXNFLSPREAD-Z-KC3"]]]);
+  const L = (ticker: string, result = "", side = "yes") => ({ ticker, side, result });
+  const legs = new Map([["KXMVECROSSCATEGORY-S1-A", [L("KXNFLGAME-X-KC", "yes"), L("KXMLBGAME-Y-LAD", "no"), L("KXNFLSPREAD-X-KC3", "no", "no")]],
+    ["KXMVECROSSCATEGORY-S1-B", [L("KXNFLGAME-Z-KC", "yes"), L("KXNFLSPREAD-Z-KC3", "yes")]]]);
   const [combos, singles] = Pro.breakdown(t, legs);
   assert.equal(combos.key, "Combos"); assert.equal(combos.count, 2);
   assert.deepEqual(combos.groups!.map((g) => [g.key, g.sports.map((s) => s.key)]), [["2 legs", ["Football"]], ["3 legs", ["Mixed"]]]);
   assert.equal(combos.groups![0].sports[0].best!.ticker, "KXMVECROSSCATEGORY-S1-B");
+  // Combos by leg-type mix, leg hit rates (worst first) and every trade.
+  const mixed = combos.groups![1].sports[0];
+  assert.deepEqual(mixed.didnt.map((k) => k.key), ["MLB · winner + NFL · spread + NFL · winner"]);
+  assert.deepEqual(mixed.legKinds, [{ key: "MLB · winner", hit: 0, missed: 1, open: 0 }, { key: "NFL · spread", hit: 1, missed: 0, open: 0 }, { key: "NFL · winner", hit: 1, missed: 0, open: 0 }]);
+  assert.deepEqual(mixed.trades.map((x) => x.ticker), ["KXMVECROSSCATEGORY-S1-A"]);
   assert.equal(singles.key, "Individual bets");
   assert.deepEqual(singles.sports!.map((s) => s.key), ["Football", "Commodities"]);
   assert.deepEqual(singles.sports![0].worked.map((k) => k.key), ["NFL · winner"]);

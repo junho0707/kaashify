@@ -1,6 +1,6 @@
 {
   "name": "kaashify",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "Browser extension: your Kalshi positions on a calendar, plus realized P&L. Read-only, uses your own API key.",
   "license": "MIT",

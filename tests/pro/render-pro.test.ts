@@ -33,7 +33,7 @@ test("P&L details: trade table, breakdown and tooltips with readable names", asy
     markets: { "KXNFLGAME-A-KC": { status: "finalized", result: "yes", settlement_ts: "2026-09-07T20:00:00Z" },
       "KXMVECROSSCATEGORY-S1-A": { status: "finalized", result: "no", settlement_ts: "2026-09-09T20:00:00Z" } } };
   const asked: string[][] = [];
-  const { doc, w } = await render([], (w, store) => {
+  const { doc, w } = await render([], (w) => {
     w.chrome.runtime.sendMessage = async (m) => m.type === "pnl-live" ? { ok: true, live }
       : m.type === "trade-info" ? (asked.push(m.tickers), { ok: true, info: {
         "KXNFLGAME-A-KC": { event: "Chiefs vs Raiders", pick: "Kansas City" },
@@ -67,7 +67,7 @@ test("P&L table, CSV and breakdown follow the selected range, including a zoomed
   const live = { at: now, fills: days.map((d) => fill(`KXNFLGAME-D${d}-KC`, 10, 0.5, 0, iso(now - d * 24 * H))),
     markets: Object.fromEntries(days.map((d, i) => [`KXNFLGAME-D${d}-KC`, { status: "finalized", result: i % 2 ? "no" : "yes", settlement_ts: iso(now - d * 24 * H + H) }])) };
   let csv = "";
-  const { doc, w } = await render([], (w, store) => {
+  const { doc, w } = await render([], (w) => {
     w.chrome.runtime.sendMessage = async (m) => (m.type === "pnl-live" ? { ok: true, live } : m.type === "trade-info" ? { ok: true, info: {} } : {});
     w.URL.createObjectURL = (b) => { b.text().then((t) => (csv = t)); return "blob:x"; };
   });
@@ -99,7 +99,7 @@ test("P&L table, CSV and breakdown follow the selected range, including a zoomed
 });
 
 test("settings: alerts section, no plan or payment", async () => {
-  const { doc } = await render([item("C", [leg("Yankees", "TB vs NYY", at(1, 19))])], (w, store) => { store.keyInfo = { keyId: "a1b2c3d4" }; });
+  const { doc } = await render([item("C", [leg("Yankees", "TB vs NYY", at(1, 19))])], (_w, store) => { store.keyInfo = { keyId: "a1b2c3d4" }; });
   doc.querySelector("#settings").click();
   await wait(20);
   const t = text(doc.querySelector("#detail"));

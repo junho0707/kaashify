@@ -7,7 +7,7 @@ import { fmt, money, pnlCls, signed } from "../../calendar/format.ts";
 import { pnlHooks } from "../../calendar/pnl-view.ts";
 import type { Trade } from "../../lib/types.ts";
 import type { TradeInfo } from "../lib/kalshi-pro.ts";
-import { type ComboLegs, type Group, type SportRow, breakdown, toCsv, tradeRows } from "../lib/pnl-pro.ts";
+import { type ComboLegs, type Group, type LegKind, type SportRow, breakdown, toCsv, tradeRows } from "../lib/pnl-pro.ts";
 import type { TradeInfoResult } from "../types.ts";
 import { send } from "./send.ts";
 
@@ -52,11 +52,22 @@ const catRow = (g: Group, max: number, depth: number, body: string) => `<details
     </summary>
     <div class="cat-body">${body}</div>
   </details>`;
-const sportBody = (c: SportRow) => `${c.worked.length ? `<h4>Worked</h4><ul>${c.worked.map(kindRow).join("")}</ul>` : ""}
-      ${c.didnt.length ? `<h4>Didn't work</h4><ul>${c.didnt.map(kindRow).join("")}</ul>` : ""}
-      <h4>Standouts</h4><ul>${tradeLine("Best", c.best)}${tradeLine("Worst", c.worst)}</ul>`;
+const legRow = (k: LegKind) => {
+  const n = k.hit + k.missed, rate = n ? k.hit / n : null;
+  return `<li><span class="k">${esc(k.key)}</span><span class="sub">${k.hit} hit · ${k.missed} missed${k.open ? ` · ${k.open} open` : ""}</span><b class="${rate == null ? "" : pnlCls(rate - 0.5)}">${rate == null ? "–" : `${Math.round(rate * 100)}%`}</b></li>`;
+};
+const tradeItem = (t: Trade) => `<li><span class="k">${esc(tradeName(t))}</span><span class="sub">${fmt.dayShort.format(t.closedAt)} · ${t.result === "exited" ? "sold" : t.result}</span><b class="${pnlCls(t.pnl)}">${signed(t.pnl)}</b></li>`;
+const sportBody = (c: SportRow) => {
+  const combo = c.trades[0]?.combo;
+  return `${c.worked.length ? `<h4>${combo ? "Leg mixes that worked" : "Worked"}</h4><ul>${c.worked.map(kindRow).join("")}</ul>` : ""}
+      ${c.didnt.length ? `<h4>${combo ? "Leg mixes that didn't" : "Didn't work"}</h4><ul>${c.didnt.map(kindRow).join("")}</ul>` : ""}
+      ${c.legKinds.length ? `<h4>Leg hit rate by type <span class="sub">worst first</span></h4><ul>${c.legKinds.map(legRow).join("")}</ul>` : ""}
+      <h4>Standouts</h4><ul>${tradeLine("Best", c.best)}${tradeLine("Worst", c.worst)}</ul>
+      <details class="all-trades"><summary>All ${c.trades.length} trade${c.trades.length === 1 ? "" : "s"}</summary><ul>${c.trades.map(tradeItem).join("")}</ul></details>`;
+};
 
-const comboLegs = (): ComboLegs => new Map(Object.entries(info).filter(([, v]) => v.legs).map(([k, v]) => [k, v.legs!.map((l) => l.market_ticker)]));
+const comboLegs = (): ComboLegs => new Map(Object.entries(info).filter(([, v]) => v.legs)
+  .map(([k, v]) => [k, v.legs!.map((l) => ({ ticker: l.market_ticker, side: l.side, result: l.result }))]));
 
 /** Combos (by number of legs, then sport) and individual bets (by sport). */
 export function categoryList(trades: Trade[]): string {
