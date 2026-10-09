@@ -11,8 +11,13 @@ const ISSUES_URL = "https://github.com/junho0707/kaashify/issues";
 
 const opt = (v: string, cur: string | null, label: string) => `<option value="${v}"${v === (cur ?? "") ? " selected" : ""}>${label}</option>`;
 
+/** Extra Settings sections after the account (the paid build's plan and alerts). */
+let extraSections = async (): Promise<string> => "";
+export const setSettingsSections = (fn: () => Promise<string>) => void (extraSections = fn);
+
 export async function showSettings(): Promise<void> {
   const { keyInfo = null } = await chrome.storage.local.get("keyInfo") as { keyInfo?: { keyId: string } | null };
+  const extra = await extraSections();
   openDrawer(`
     <h2>Settings</h2>
     <section class="set"><h3>Kalshi account</h3>
@@ -20,6 +25,7 @@ export async function showSettings(): Promise<void> {
         <p><button id="rekey">Use a different key</button> <button id="unkey">Disconnect</button></p>
         <p class="sub">To revoke the key everywhere, delete it on <a href="${KALSHI_KEYS_URL}" target="_blank" rel="noopener">Kalshi ↗</a>.</p>`
         : `<p>Not connected.</p><p><button id="rekey" class="primary">Set up</button></p>`}</section>
+    ${extra}
     <section class="set"><h3>Appearance</h3>
       <label class="row-set">Theme <select id="theme-pick">${opt("", prefs.theme, "Same as system")}${opt("light", prefs.theme, "Light")}${opt("dark", prefs.theme, "Dark")}</select></label></section>
     <section class="set"><h3>Help &amp; data</h3>

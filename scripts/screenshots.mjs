@@ -1,12 +1,18 @@
 // Store screenshots (1280×800) of the real extension against a mocked Kalshi API with demo data.
 // Usage: npm run screenshots  ->  docs/screenshots/*.png (light) and *-dark.png
+// With a private build overlay (src/pro/): store/screenshot-<n>-*.png for the store listings, including the extras.
 import { chromium } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { generateKeyPairSync } from "node:crypto";
 
 const EXT = fileURLToPath(new URL("../dist/chromium", import.meta.url)); // npm run screenshots builds it first
-const OUT = fileURLToPath(new URL("../docs/screenshots/", import.meta.url));
+const overlayPath = fileURLToPath(new URL("../src/pro/build.mjs", import.meta.url));
+const overlay = existsSync(overlayPath) ? await import(overlayPath) : null;
+const PRO = !!overlay;
+const OUT = fileURLToPath(new URL(PRO ? "../store/" : "../docs/screenshots/", import.meta.url));
+// Store listings show the pictures in file name order.
+const STORE_NAMES = { connect: 1, today: 2, details: 3, month: 4, pnl: 5, breakdown: 6, settings: 7, "pnl-30d": 8, "pnl-zoom": 9 };
 mkdirSync(OUT, { recursive: true });
 
 const H = 3600e3, DAY = 24 * H, now = Date.now();
@@ -108,7 +114,7 @@ for (let i = 0; i < 70; i++) {
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const context = await chromium.launchPersistentContext("", {
   channel: "chromium", viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1,
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--host-resolver-rules=MAP *kalshi.com 0.0.0.0"],
+  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--host-resolver-rules=MAP *kalshi.com 0.0.0.0, MAP *.workers.dev 0.0.0.0"],
 });
 await context.route("https://api.elections.kalshi.com/**", (route) => {
   const u = new URL(route.request().url()), p = u.pathname;
@@ -126,7 +132,7 @@ const sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("servicewo
 const extId = new URL(sw.url()).host;
 const page = await context.newPage();
 const url = `chrome-extension://${extId}/calendar.html`;
-const shot = (name) => page.screenshot({ path: `${OUT}${name}.png` });
+const shot = (name, sfx = "") => page.screenshot({ path: `${OUT}${PRO ? `screenshot-${STORE_NAMES[name]}-${name}` : name}${sfx}.png` });
 
 for (const theme of ["light", "dark"]) {
   const sfx = theme === "dark" ? "-dark" : "";
@@ -136,28 +142,30 @@ for (const theme of ["light", "dark"]) {
     await sw.evaluate(() => chrome.storage.local.clear());
     await page.reload();
     await page.waitForSelector("#key-form");
-    await shot(`connect${sfx}`);
+    await shot("connect", sfx);
     await sw.evaluate((pem) => kaashify.setKey("a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d", pem), privateKey.export({ type: "pkcs1", format: "pem" }));
   }
   await page.reload();
   await page.waitForSelector(".sec.today .card");
   await page.waitForTimeout(500);
-  await shot(`today${sfx}`);
+  await shot("today", sfx);
   await page.click(".sec.today .card >> nth=1");
   await page.waitForTimeout(300);
-  await shot(`details${sfx}`);
+  await shot("details", sfx);
   await page.keyboard.press("Escape");
   await page.click('[data-view="month"]');
   await page.waitForTimeout(300);
-  await shot(`month${sfx}`);
+  await shot("month", sfx);
   await page.click('[data-view="pnl"]');
   await page.evaluate(() => document.querySelector('[data-pnl-range="all"]')?.click());
   await page.waitForSelector(".disclaimer", { timeout: 30000 });
-  await page.waitForTimeout(500);
-  await shot(`pnl${sfx}`);
+  await page.waitForTimeout(PRO ? 2500 : 500); // names and combo legs fill in
+  // Top level open, and the first group inside each; the rest folded.
+  await page.evaluate(() => document.querySelectorAll("#cats details").forEach((d) => (d.open = d.classList.contains("d0") || d.matches(".d0 > .cat-body > .cat:first-child"))));
+  await shot("pnl", sfx);
   await page.click('[data-pnl-range="30d"]');
   await page.waitForTimeout(200);
-  await shot(`pnl-30d${sfx}`);
+  await shot("pnl-30d", sfx);
   const box = await page.locator("#chart").boundingBox();
   await page.mouse.move(box.x + box.width * 0.35, box.y + box.height / 2);
   await page.mouse.down();
@@ -165,8 +173,13 @@ for (const theme of ["light", "dark"]) {
   await page.mouse.up();
   await page.mouse.move(5, 5); // off the chart: no tooltip in the picture
   await page.waitForTimeout(200);
-  await shot(`pnl-zoom${sfx}`);
+  await shot("pnl-zoom", sfx);
   await page.click('[data-pnl-range="all"]');
+  if (PRO) {
+    await page.evaluate(() => document.querySelector(".pnl-sec:has(#cats)")?.scrollIntoView());
+    await page.waitForTimeout(200);
+    await shot("breakdown", sfx);
+  }
   await page.click('[data-view="home"]');
   if (theme === "light") {
     await page.click("#settings");
@@ -176,4 +189,4 @@ for (const theme of ["light", "dark"]) {
   }
 }
 await context.close();
-console.log("screenshots in docs/screenshots/");
+console.log(`screenshots in ${PRO ? "store/" : "docs/screenshots/"}`);

@@ -3,7 +3,7 @@
 import type { Schedule } from "../lib/types.ts";
 import { startOfDay } from "./format.ts";
 
-export type ViewName = "home" | "day" | "week" | "month" | "year" | "list" | "pnl";
+export type ViewName = "home" | "day" | "week" | "month" | "year" | "list" | "pnl" | "watch";
 export type RangeKey = "24h" | "7d" | "14d" | "30d" | "90d" | "ytd" | "all";
 
 export const prefs = { v: 2, view: "home" as ViewName, weekOpen: false, theme: null as "light" | "dark" | null, pnlRange: "all" as RangeKey };

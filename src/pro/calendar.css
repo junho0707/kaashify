@@ -1,0 +1,36 @@
+/* Full build: the base stylesheet plus alerts, trade table and breakdown. */
+@import "../calendar/calendar.css";
+
+#alerts { width: 34px; padding: 5px 0; }
+
+.cat { border-top: 1px solid var(--line); }
+.cat:first-child { border-top: 0; }
+.cat > summary { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(120px, auto) minmax(60px, 160px) 90px; gap: 12px; align-items: center;
+  padding: 10px 2px; cursor: pointer; list-style: none; font-variant-numeric: tabular-nums; }
+.cat > summary::-webkit-details-marker { display: none; }
+.cat > summary .name { font-weight: 600; }
+.cat > summary .name::before { content: "\25B8"; color: var(--muted); margin-right: 8px; }
+.cat[open] > summary .name::before { content: "\25BE"; }
+.cat > summary b { text-align: right; }
+.cat .meter { display: block; height: 8px; border-radius: 0; background: var(--bg); overflow: hidden; }
+.cat .meter i { display: block; height: 100%; background: var(--muted); } .cat .meter i.pos { background: var(--won); } .cat .meter i.neg { background: var(--lost); }
+.cat-body { padding: 0 2px 12px 22px; }
+.cat.d0 > summary .name { font-size: 15px; }
+.cat.d1 > .cat-body, .cat.d0 > .cat-body:has(> .cat) { padding: 0 0 4px 16px; }
+.cat.d1 > summary .name, .cat.d2 > summary .name { font-weight: 500; }
+.cat-body h4 { margin: 8px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.cat-body ul { list-style: none; margin: 0; padding: 0; }
+.cat-body li { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; font-variant-numeric: tabular-nums; }
+.cat-body li .k { flex: 1; min-width: 0; }
+.cat-body li .sub { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.cat-body li b { white-space: nowrap; }
+@media (max-width: 560px) { .cat > summary { grid-template-columns: 1fr auto; } .cat .meter, .cat > summary .sub { display: none; } }
+.pnl-sec h3 #pnl-export { float: right; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.trades > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 2px 0; }
+.trade-table { margin-top: 8px; }
+.trade-table td:first-child { color: var(--muted); white-space: nowrap; text-align: left; }
+.trade-table th:nth-child(2), .trade-table td:nth-child(2) { text-align: left; }
+.trade-table .mk { display: block; }
+.trade-table .sub { font-size: 11px; }
+@media (max-width: 560px) { .trade-table th:nth-child(3), .trade-table td:nth-child(3), .trade-table th:nth-child(4), .trade-table td:nth-child(4) { display: none; } }
+.settings .set-h { margin: 14px 0 0; font-size: 13px; }

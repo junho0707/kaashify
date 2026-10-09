@@ -3,6 +3,7 @@
 import * as Auth from "../lib/auth.ts";
 import { Cache } from "../lib/cache.ts";
 import * as Kalshi from "../lib/kalshi.ts";
+import { kalshiQueue, refreshGapMs } from "../lib/throttle.ts";
 import type { History, LastError, Position, RefreshResult, Schedule } from "../lib/types.ts";
 
 const LOG_MAX = 20;
@@ -23,10 +24,15 @@ export async function saveCache(cache: Cache): Promise<void> {
   if (cache.dirty) await chrome.storage.local.set({ eventCache: cache.toJSON() });
 }
 
+/** Called after each successful refresh with the new schedule (the paid build hooks its alerts in here). */
+const refreshedHooks: ((data: Schedule) => Promise<void> | void)[] = [];
+export const onRefreshed = (fn: (data: Schedule) => Promise<void> | void) => void refreshedHooks.push(fn);
+
 // Concurrent refresh requests (open + alarm + calendar timer) share one run.
 let inFlight: Promise<RefreshResult> | null = null;
 export const running = () => inFlight;
-export function refresh(source?: { interactive?: boolean }): Promise<RefreshResult> {
+/** interactive: the user opened the page. auto: a timer or alarm (spaced out, see below); alarms pass nothing. */
+export function refresh(source?: { interactive?: boolean; auto?: boolean }): Promise<RefreshResult> {
   return (inFlight ??= doRefresh(source).finally(() => (inFlight = null)));
 }
 
@@ -36,7 +42,13 @@ async function logRefresh(entry: Record<string, unknown>): Promise<void> {
   await chrome.storage.local.set({ refreshLog: [entry, ...refreshLog].slice(0, LOG_MAX) });
 }
 
-async function doRefresh(source?: { interactive?: boolean }): Promise<RefreshResult> {
+async function doRefresh(source?: { interactive?: boolean; auto?: boolean }): Promise<RefreshResult> {
+  // Background refreshes (the open page's timer, alarms) are spaced out: ~1 min while a game is live, else 5 min,
+  // and none while Kalshi has asked us to slow down. Opening the page always refreshes.
+  if (!source || (source.auto && !source.interactive)) {
+    const { schedule: last = null } = await chrome.storage.local.get("schedule") as { schedule?: Schedule | null };
+    if (last && (Date.now() - last.fetchedAt < refreshGapMs(last) || kalshiQueue.pausedFor() > 0)) return { ok: true, data: last };
+  }
   const t0 = Date.now();
   const log: Record<string, unknown> = { at: t0, trigger: source?.interactive ? "open" : "background" };
   const { lastPositions = null } = await chrome.storage.local.get("lastPositions") as { lastPositions?: { positions: Position[]; at: number } | null };
@@ -48,7 +60,7 @@ async function doRefresh(source?: { interactive?: boolean }): Promise<RefreshRes
       await chrome.storage.local.set({ lastPositions: { positions, at: Date.now() } });
     } catch (e) {
       // A missing or rejected key must be shown, not hidden behind old data; a network hiccup falls back to the last copy.
-      if (e instanceof Kalshi.AuthError || !lastPositions) throw e;
+      if (e instanceof Kalshi.AuthError || e instanceof Kalshi.RateLimitError || !lastPositions) throw e;
       positions = lastPositions.positions; staleAt = lastPositions.at; reason = (e as Error).message; via = "snapshot";
       log.reasons = reason;
     }
@@ -58,13 +70,27 @@ async function doRefresh(source?: { interactive?: boolean }): Promise<RefreshRes
     await chrome.storage.local.set({ schedule: data, lastError: null });
     await saveCache(cache);
     updateBadge(data);
+    for (const fn of refreshedHooks) await fn(data);
     return { ok: true, data };
   } catch (e) {
     const message = (e as Error).message;
+    if (e instanceof Kalshi.RateLimitError) {
+      // Rate limited (other programs on this IP may be using Kalshi's API too): keep showing the last data, with a
+      // small note, and try again in a minute. Never a hard error.
+      log.rateLimited = true;
+      chrome.alarms.create("refresh-retry", { delayInMinutes: 1 });
+      const { schedule: last = null } = await chrome.storage.local.get("schedule") as { schedule?: Schedule | null };
+      if (last) {
+        const data: Schedule = { ...last, rateLimited: Date.now() };
+        await chrome.storage.local.set({ schedule: data, lastError: null });
+        log.ok = true;
+        return { ok: true, data };
+      }
+    }
     log.ok = false;
     log.error = message;
     const needsKey = e instanceof Kalshi.NoKeyError;
-    const lastError: LastError = { message, auth: e instanceof Kalshi.AuthError, needsKey, debug: !needsKey, at: Date.now() };
+    const lastError: LastError = { message, auth: e instanceof Kalshi.AuthError, needsKey, debug: !needsKey && !(e instanceof Kalshi.RateLimitError), at: Date.now() };
     await chrome.storage.local.set({ lastError });
     chrome.action.setBadgeText({ text: needsKey ? "" : "!" });
     chrome.action.setBadgeBackgroundColor({ color: "#b3261e" });
@@ -112,7 +138,13 @@ export async function removeKey(): Promise<void> {
 export async function pnlLive(): Promise<History> {
   const { pnlLive: prev = null } = await chrome.storage.local.get("pnlLive") as { pnlLive?: History | null };
   const cache = await loadCache();
-  const live = await Kalshi.history(cache, prev);
+  let live: History;
+  try {
+    live = await Kalshi.history(cache, prev);
+  } catch (e) {
+    if (e instanceof Kalshi.RateLimitError && prev) return prev; // the last copy until Kalshi lets us back in
+    throw e;
+  }
   await chrome.storage.local.set({ pnlLive: live });
   await saveCache(cache);
   return live;

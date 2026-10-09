@@ -10,6 +10,7 @@ import { forgetFetch, initPnl, renderPnl } from "./pnl-view.ts";
 import { applyTheme, clearAll, copyDebug, setTheme, showSettings } from "./settings.ts";
 import { EMBED, type ViewName, loadPrefs, prefs, savePrefs, state } from "./state.ts";
 import { evIndex, resetEvIndex, summaryHtml, views } from "./views.ts";
+import { initWatch, renderWatch } from "./watch-view.ts";
 
 if (EMBED) document.body.classList.add("embed");
 const closeOverlay = () => parent.postMessage("kcc-close", "*");
@@ -19,10 +20,12 @@ function render(): void {
   const v = views[prefs.view] ?? views.home;
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === prefs.view));
   $("#range").textContent = v.title();
-  $(".nav").hidden = prefs.view === "home" || prefs.view === "list" || prefs.view === "pnl";
-  $("#main").innerHTML = v.render();
+  $(".nav").hidden = prefs.view === "home" || prefs.view === "list" || prefs.view === "pnl" || prefs.view === "watch";
+  // The Watch tab keeps its frame (and whatever is being typed) when only the data changes.
+  if (prefs.view !== "watch" || !$maybe("#main > .watch")) $("#main").innerHTML = v.render();
   $("#summary").innerHTML = summaryHtml();
   if (prefs.view === "pnl") renderPnl();
+  if (prefs.view === "watch") renderWatch();
 }
 
 async function load(): Promise<void> {
@@ -50,7 +53,7 @@ async function refresh(): Promise<void> {
 // After the extension is reloaded or updated, a window that was already open can't reach it any more:
 // say so once instead of throwing on every timer.
 let staleShown = false;
-function extensionGone(): boolean {
+export function extensionGone(): boolean {
   if (chrome.runtime?.id) return false;
   if (!staleShown) {
     staleShown = true;
@@ -73,6 +76,7 @@ function go(view: ViewName, cursor?: Date): void {
 loadPrefs();
 applyTheme();
 initPnl();
+const watchReady = initWatch();
 initConnect(() => { forgetFetch(); load(); });
 
 document.addEventListener("click", async (ev) => {
@@ -141,7 +145,7 @@ chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse) => {
 });
 chrome.storage.onChanged.addListener((c, area) => { if (area === "local" && (c.schedule || c.lastError)) load(); });
 
-load().then(refresh); // always pull fresh data when opened
+watchReady.finally(() => load().then(refresh)); // always pull fresh data when opened
 // While the calendar is on screen, keep it current (paused when hidden).
 setInterval(() => {
   if (document.visibilityState === "visible" && !extensionGone()) chrome.runtime.sendMessage({ type: "refresh" } satisfies Request).catch(() => {});

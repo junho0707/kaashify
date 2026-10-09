@@ -1,101 +1,20 @@
-// Loads the unpacked extension in Chromium against a mocked kalshi.com and public API.
-import { test, expect, chromium } from "@playwright/test";
-import { fileURLToPath } from "node:url";
-import { generateKeyPairSync, verify, constants } from "node:crypto";
+// Loads the unpacked extension in Chromium against a mocked kalshi.com and public API (see kalshi-mock.ts).
+import { test, expect } from "@playwright/test";
+import { generateKeyPairSync } from "node:crypto";
+import { type Ext, KEY_ID, PEM, TENNIS, launch, settle as settleOn, storage as storageOf } from "./kalshi-mock.ts";
 
-const EXT = fileURLToPath(new URL("../dist/chromium", import.meta.url));
-const H = 3600e3;
-// The test game must fall on today's date in the browser's time zone: 2h ahead, or 2h back late in the day.
-const later = new Date(Date.now() + 2 * H);
-const soon = later.toDateString() === new Date().toDateString() ? later : new Date(Date.now() - 2 * H);
-const pad = (n) => String(n).padStart(2, "0");
-// An ET wall-clock ticker time ~2h from now is close enough for "today/tomorrow" checks.
-const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-const et = new Date(soon.toLocaleString("en-US", { timeZone: "America/New_York" }));
-const GAME = `KXMLBGAME-${String(et.getFullYear()).slice(2)}${MON[et.getMonth()]}${pad(et.getDate())}${pad(et.getHours())}00LADATL`;
-const TENNIS = "KXWTAMATCH-26OCT06GAUMER";
-const COMBO = "KXMVECROSSCATEGORY-S2026TEST-ABC";
-
-// The user's own API key: the mock verifies every signed request with the public half.
-const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-const PEM = privateKey.export({ type: "pkcs1", format: "pem" });
-const KEY_ID = "a1b2c3d4-1111-2222-3333-444455556666";
-const signedOk = (req) => {
-  const h = req.headers(), path = new URL(req.url()).pathname;
-  if (h["kalshi-access-key"] !== KEY_ID || !h["kalshi-access-signature"]) return false;
-  return verify("sha256", Buffer.from(h["kalshi-access-timestamp"] + req.method() + path),
-    { key: publicKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 }, Buffer.from(h["kalshi-access-signature"], "base64"));
-};
-
-// GET /portfolio/positions, two pages by cursor.
-const positionsPage1 = { cursor: "p2", market_positions: [
-  { ticker: COMBO, position_fp: "10.00", market_exposure_dollars: "2.000000", fees_paid_dollars: "0.100000", last_updated_ts: new Date(Date.now() - 24 * H).toISOString() }] };
-const positionsPage2 = { cursor: "", market_positions: [
-  { ticker: `${TENNIS}-MER`, position_fp: "5.00", market_exposure_dollars: "2.500000", fees_paid_dollars: "0.000000" }] };
-
-const markets = {
-  [COMBO]: { ticker: COMBO, event_ticker: "KXMVECROSSCATEGORY-S2026TEST", status: "active", expected_expiration_time: soon.toISOString(), mve_selected_legs: [{ market_ticker: `${GAME}-LAD`, event_ticker: GAME, side: "yes" }] },
-  [`${GAME}-LAD`]: { ticker: `${GAME}-LAD`, event_ticker: GAME, status: "active", yes_sub_title: "Los Angeles D", yes_bid_dollars: "0.55", yes_ask_dollars: "0.57" },
-  [`${TENNIS}-MER`]: { ticker: `${TENNIS}-MER`, event_ticker: TENNIS, status: "active", yes_sub_title: "Elise Mertens", yes_bid_dollars: "0.40", yes_ask_dollars: "0.42" },
-};
-
-const SOME_PAGE = `<!doctype html><title>Some site</title><body>Hello</body>`;
-
-// The background exposes its functions as `kaashify` on the service worker global (see src/background/index.ts).
 declare const kaashify: any;
 
-let context, sw, extId, positionCalls;
+let context: Ext["context"], sw: Ext["sw"], extId: string, positionCalls: Ext["positionCalls"];
 
 test.beforeAll(async () => {
-  context = await chromium.launchPersistentContext("", {
-    channel: "chromium",
-    // Never reach the real Kalshi: anything the mocks don't catch fails to resolve.
-    args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, "--host-resolver-rules=MAP *kalshi.com 0.0.0.0"],
-  });
-  positionCalls = [];
-  await context.route("https://kalshi.com/**", (route) => route.fulfill({ contentType: "text/html", body: SOME_PAGE }));
-  await context.route("https://api.elections.kalshi.com/**", (route) => {
-    const req = route.request(), u = new URL(req.url());
-    if (u.pathname.startsWith("/trade-api/v2/portfolio/")) {
-      if (!signedOk(req)) return route.fulfill({ status: 401, json: { error: { code: "authentication_error" } } });
-      if (u.pathname.endsWith("/balance")) return route.fulfill({ json: { balance: 1000 } });
-      if (u.pathname.endsWith("/positions")) {
-        positionCalls.push({ cursor: u.searchParams.get("cursor") || "", filter: u.searchParams.get("count_filter") });
-        return route.fulfill({ json: u.searchParams.get("cursor") === "p2" ? positionsPage2 : positionsPage1 });
-      }
-      if (u.pathname.endsWith("/fills")) {
-        const fill = (t, n, px, at) => ({ ticker: t, outcome_side: "yes", book_side: "bid", count_fp: String(n), yes_price_dollars: String(px), no_price_dollars: String(1 - px), fee_cost: "0.10", created_time: at });
-        return route.fulfill({ json: u.searchParams.get("cursor")
-          ? { fills: [fill("KXOLD-B-X", 10, 0.5, "2026-09-01T10:00:00Z")], cursor: "" }
-          : { fills: [fill("KXOLD-A-X", 10, 0.4, "2026-09-02T10:00:00Z")], cursor: "next" } });
-      }
-      return route.fulfill({ status: 404, body: "" });
-    }
-    if (u.pathname.endsWith("/markets")) {
-      const want = (u.searchParams.get("tickers") || "").split(",");
-      if (want[0].startsWith("KXOLD")) return route.fulfill({ json: { markets: want.map((t) => ({ ticker: t, status: "finalized", result: t === "KXOLD-A-X" ? "yes" : "no", settlement_ts: "2026-09-03T00:00:00Z" })) } });
-      return route.fulfill({ json: { markets: want.map((t) => markets[t]).filter(Boolean) } });
-    }
-    if (u.pathname.includes("/events/")) {
-      const t = decodeURIComponent(u.pathname.split("/").pop());
-      return route.fulfill({ json: { event: { title: t === TENNIS ? "Gauff vs Mertens" : "LAD vs ATL", sub_title: "", series_ticker: t.split("-")[0] } } });
-    }
-    if (u.pathname.endsWith("/milestones")) {
-      const live = u.searchParams.get("related_event_ticker") === TENNIS;
-      return route.fulfill({ json: { milestones: live ? [{ start_date: new Date(Date.now() - H).toISOString(), details: { status: "live" } }] : [] } });
-    }
-    if (u.pathname.endsWith("/candlesticks")) return route.fulfill({ status: 429, headers: { "retry-after": "0" }, body: "" });
-    return route.fulfill({ status: 404, body: "" });
-  });
-  sw = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
-  extId = new URL(sw.url()).host;
+  ({ context, sw, extId, positionCalls } = await launch());
 });
 
 test.afterAll(() => context?.close());
 
-// Waits out refreshes started by pages (each calendar page refreshes when it opens), so a test gets its own run.
-const settle = () => sw.evaluate(async () => { while (kaashify.running()) await kaashify.running(); });
-const storage = (keys) => sw.evaluate((k) => chrome.storage.local.get(k), keys);
+const settle = () => settleOn(sw);
+const storage = (keys) => storageOf(sw, keys);
 
 test("first install opens the setup page", async () => {
   await expect.poll(() => context.pages().some((p) => p.url().endsWith("/calendar.html"))).toBe(true);
@@ -164,6 +83,26 @@ test("a network failure falls back to the last positions", async () => {
   expect(res.ok).toBe(true);
   expect((await storage("refreshLog")).refreshLog[0]).toMatchObject({ ok: true, via: "snapshot" });
   expect((await sw.evaluate(() => kaashify.refresh({}))).data.via).toBe("api");
+});
+
+test("Kalshi's rate limit (429) keeps the last data with a note, then recovers", async () => {
+  await settle();
+  // Every /markets call is turned away (Retry-After 0 keeps the test fast) for the next refresh's retries.
+  await context.route("https://api.elections.kalshi.com/trade-api/v2/markets?**", (route) => route.fulfill({ status: 429, headers: { "retry-after": "0" }, body: "" }), { times: 5 });
+  const res = await sw.evaluate(() => kaashify.refresh({}));
+  expect(res.ok).toBe(true);
+  expect(res.data.rateLimited).toBeGreaterThan(0);
+  expect(res.data.items).toHaveLength(2);
+  expect((await storage("lastError")).lastError).toBeNull();
+  expect((await storage("refreshLog")).refreshLog[0]).toMatchObject({ ok: true, rateLimited: true });
+  const cal = await context.newPage();
+  await cal.goto(`chrome-extension://${extId}/calendar.html`);
+  await expect(cal.locator(".sec.today .card")).toHaveCount(2);
+  await expect(cal.locator("#status")).toBeHidden();
+  await cal.close();
+  await settle();
+  const ok = await sw.evaluate(() => kaashify.refresh({}));
+  expect(ok.data.rateLimited ?? null).toBeNull();
 });
 
 test("toolbar click shows the overlay on a web page", async () => {

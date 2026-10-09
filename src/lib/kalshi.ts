@@ -2,20 +2,21 @@
 // see auth.ts), plus public market data, assembled into the schedule the calendar draws.
 
 import type { Cache } from "./cache.ts";
+import { RateLimitError, kalshiQueue } from "./throttle.ts";
 import { marketKind, pickLabel, startFromTicker } from "./markets.ts";
 import type { Fill, History, Item, ItemState, Leg, LegOutcome, MarketResult, Position, Schedule, Side } from "./types.ts";
 
-export { marketKind, pickLabel, startFromTicker };
+export { marketKind, pickLabel, startFromTicker, RateLimitError };
 
 const BASE = "https://api.elections.kalshi.com/trade-api/v2";
-const SETTLED = new Set(["settled", "finalized", "determined"]);
+export const SETTLED = new Set(["settled", "finalized", "determined"]);
 
 export class AuthError extends Error {}
 export class NoKeyError extends AuthError {}
 
 // --- Raw API shapes (only the fields used) -------------------------------
 
-interface ApiLegRef { market_ticker: string; event_ticker?: string; side?: Side }
+export interface ApiLegRef { market_ticker: string; event_ticker?: string; side?: Side }
 export interface ApiMarket extends MarketResult {
   ticker: string;
   event_ticker?: string;
@@ -28,13 +29,17 @@ export interface ApiMarket extends MarketResult {
   occurrence_datetime?: string;
   mve_selected_legs?: ApiLegRef[];
 }
-interface EventInfo { title: string; sub: string; series: string; category?: string }
+export interface EventInfo { title: string; sub: string; series: string; category?: string }
 interface Candle { end_period_ts: number; yes_bid?: { close_dollars?: string }; yes_ask?: { close_dollars?: string }; price?: { close_dollars?: string; previous_dollars?: string } }
 
 // --- HTTP -------------------------------------------------------------
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let requests = 0; // public API calls in the current run, reported in the refresh log
+/** Starts a new count of public API calls; returns a reader for it. */
+export function countRequests(): () => number {
+  requests = 0;
+  return () => requests;
+}
 
 /** Nothing may hang a refresh: wraps a promise with a deadline. */
 export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
@@ -43,17 +48,11 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): P
     .finally(() => clearTimeout(t));
 }
 
-const backoff = (r: Response, i: number) => sleep(Math.min(10000, Number(r.headers.get("retry-after")) * 1000 || 1000 * 2 ** i));
-
-/** Public GET; retries a 429 up to 3 times, honoring Retry-After (else 1 s, 2 s, 4 s). */
-async function publicGet<T>(path: string, retries = 3): Promise<T> {
-  for (let i = 0; ; i++) {
-    requests++;
-    const r = await fetch(BASE + path, { signal: AbortSignal.timeout(15000) });
-    if (r.status === 429 && i < retries) { await backoff(r, i); continue; }
-    if (!r.ok) throw new Error(`GET ${path} -> ${r.status}`);
-    return r.json() as Promise<T>;
-  }
+/** Public GET through the shared queue (rate-limited; a 429 is retried there, see throttle.ts). */
+export async function publicGet<T>(path: string): Promise<T> {
+  const r = await kalshiQueue.run(() => (requests++, fetch(BASE + path, { signal: AbortSignal.timeout(15000) })));
+  if (!r.ok) throw new Error(`GET ${path} -> ${r.status}`);
+  return r.json() as Promise<T>;
 }
 
 // --- The user's account (official API, signed GET requests only) ----------------
@@ -65,17 +64,17 @@ export const setSigner = (fn: Signer | null) => void (signer = fn);
 
 type Params = Record<string, string | number | null | undefined>;
 
-async function accountGet<T>(path: string, params: Params = {}, retries = 3): Promise<T> {
+async function accountGet<T>(path: string, params: Params = {}): Promise<T> {
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, String(v)])).toString();
-  for (let i = 0; ; i++) {
+  const r = await kalshiQueue.run(async () => {
+    // Signed per attempt: the timestamp must be fresh after a backoff.
     const headers = signer && (await signer("GET", "/trade-api/v2" + path));
     if (!headers) throw new NoKeyError("Connect your Kalshi API key to load your positions.");
-    const r = await fetch(BASE + path + (q ? `?${q}` : ""), { headers, signal: AbortSignal.timeout(20000) });
-    if (r.status === 429 && i < retries) { await backoff(r, i); continue; }
-    if (r.status === 401 || r.status === 403) throw new AuthError(`Kalshi rejected your API key (HTTP ${r.status}). Check the Key ID and private key, or make a new key.`);
-    if (!r.ok) throw new Error(`GET ${path} -> HTTP ${r.status}`);
-    return r.json() as Promise<T>;
-  }
+    return fetch(BASE + path + (q ? `?${q}` : ""), { headers, signal: AbortSignal.timeout(20000) });
+  });
+  if (r.status === 401 || r.status === 403) throw new AuthError(`Kalshi rejected your API key (HTTP ${r.status}). Check the Key ID and private key, or make a new key.`);
+  if (!r.ok) throw new Error(`GET ${path} -> HTTP ${r.status}`);
+  return r.json() as Promise<T>;
 }
 
 /** Cursor pagination: concatenates `key` from every page. */
@@ -171,7 +170,7 @@ export async function history(cache: Cache, prev?: History | null): Promise<Hist
 /** Cheap signed request to check a newly entered key. */
 export const checkKey = () => accountGet("/portfolio/balance");
 
-async function getMarkets(tickers: string[]): Promise<Map<string, ApiMarket>> {
+export async function getMarkets(tickers: string[]): Promise<Map<string, ApiMarket>> {
   const map = new Map<string, ApiMarket>();
   const uniq = [...new Set(tickers)];
   for (let i = 0; i < uniq.length; i += 50) {
@@ -182,7 +181,7 @@ async function getMarkets(tickers: string[]): Promise<Map<string, ApiMarket>> {
   return map;
 }
 
-async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Promise<void> {
+export async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Promise<void> {
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
     while (i < items.length) await fn(items[i++]);
@@ -190,7 +189,7 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Prom
 }
 
 /** Event titles ("LAD vs ATL (Oct 7)") never change, so they're cached across refreshes. */
-async function getEvents(eventTickers: string[], cache: Cache): Promise<void> {
+export async function getEvents(eventTickers: string[], cache: Cache): Promise<void> {
   const todo = [...new Set(eventTickers)].filter((t) => !cache.has(`ev:${t}`));
   await pool(todo, 6, async (t) => {
     try {
@@ -213,9 +212,9 @@ const DONE_STATUS = /^(closed|ended|finished|complete|completed|co|w|wo|wov|ret|
 export const phaseOf = (status: string | null | undefined): "live" | "done" | null =>
   status == null ? null : LIVE_STATUS.test(status) ? "live" : DONE_STATUS.test(status) ? "done" : null;
 
-interface Milestone { start: number | null; phase?: "live" | "done" | null }
+export interface Milestone { start: number | null; phase?: "live" | "done" | null }
 
-async function getMilestones(eventTickers: string[], cache: Cache, now = Date.now()): Promise<Map<string, Milestone>> {
+export async function getMilestones(eventTickers: string[], cache: Cache, now = Date.now()): Promise<Map<string, Milestone>> {
   const out = new Map<string, Milestone>();
   const todo = [...new Set(eventTickers)].filter((e) => {
     const c = cache.get<Milestone>(`ms:${e}`);
@@ -235,7 +234,7 @@ async function getMilestones(eventTickers: string[], cache: Cache, now = Date.no
 }
 
 /** Legs worth a milestone lookup: no start time in the ticker, or started within the last day. */
-function needsMilestone(eventTicker: string, now = Date.now()): boolean {
+export function needsMilestone(eventTicker: string, now = Date.now()): boolean {
   const ts = startFromTicker(eventTicker)?.ts;
   return ts == null || (ts <= now && now - ts < 24 * 3600e3);
 }
@@ -273,14 +272,14 @@ async function legOddsAt(legs: ApiLegRef[], ts: number, cache: Cache): Promise<(
 }
 
 /** Current market-implied chance of this side hitting: bid/ask midpoint, else last trade. */
-function sideProb(m: ApiMarket | undefined, side: Side): number | null {
+export function sideProb(m: ApiMarket | undefined, side: Side): number | null {
   if (!m) return null;
   const bid = Number(m.yes_bid_dollars), ask = Number(m.yes_ask_dollars), last = Number(m.last_price_dollars);
   const yes = bid > 0 && ask > 0 && ask < 1 ? (bid + ask) / 2 : last > 0 ? last : null;
   return yes == null ? null : side === "no" ? 1 - yes : yes;
 }
 
-function outcomeOf(m: ApiMarket | undefined, side: Side): LegOutcome {
+export function outcomeOf(m: ApiMarket | undefined, side: Side): LegOutcome {
   if (!m || !(m.result === "yes" || m.result === "no")) return "pending";
   return m.result === side ? "won" : "lost";
 }
@@ -307,7 +306,7 @@ function buildLeg(ticker: string, side: Side, market: ApiMarket | undefined, ev:
   };
 }
 
-const stateOf = (it: { isCombo: boolean; legs: Leg[] }): ItemState => {
+export const stateOf = (it: { isCombo: boolean; legs: Leg[] }): ItemState => {
   if (!it.isCombo) return it.legs[0].outcome;
   return it.legs.some((l) => l.outcome === "lost") ? "busted" : it.legs.every((l) => l.outcome === "won") ? "hit" : "alive";
 };
@@ -315,7 +314,12 @@ const stateOf = (it: { isCombo: boolean; legs: Leg[] }): ItemState => {
 /** Builds the calendar's schedule from positions (from myPositions() or a stored copy) and public market data. */
 export async function loadSchedule(cache: Cache, positions: Position[]): Promise<Schedule> {
   requests = 0;
-  const markets = await getMarkets(positions.map((p) => p.ticker));
+  // Fewer requests: a combo's legs never change and a settled leg's market is final, so both are cached; the
+  // positions and the open legs of combos seen before go in one /markets call.
+  const settledLeg = (x: string) => cache.get<ApiMarket>(`lg:${x}`);
+  const knownLegs = positions.flatMap((p) => cache.get<ApiLegRef[]>(`mve:${p.ticker}`) ?? []).map((l) => l.market_ticker);
+  const fetched = await getMarkets([...positions.map((p) => p.ticker), ...knownLegs.filter((x) => !settledLeg(x))]);
+  const markets = new Map(positions.flatMap((p) => (fetched.has(p.ticker) ? [[p.ticker, fetched.get(p.ticker)!] as const] : [])));
 
   const legsOf = new Map<string, ApiLegRef[]>();
   const comboEnd = new Map<string, number | null>();
@@ -324,13 +328,23 @@ export async function loadSchedule(cache: Cache, positions: Position[]): Promise
     const m = markets.get(p.ticker);
     // A combo's own expected result time is real; date-only legs (tennis, soccer) fall back to it.
     const isCombo = !!m?.mve_selected_legs?.length;
+    if (isCombo && !cache.has(`mve:${p.ticker}`)) cache.set(`mve:${p.ticker}`, m!.mve_selected_legs);
     comboEnd.set(p.ticker, isCombo ? t(m!.expected_expiration_time) : null);
     const legs = isCombo ? m!.mve_selected_legs! : [{ market_ticker: p.ticker, event_ticker: m?.event_ticker, side: "yes" as Side }];
     legsOf.set(p.ticker, legs);
     legRefs.push(...legs.map((l) => l.market_ticker));
   }
-  const legMarkets = await getMarkets(legRefs.filter((x) => !markets.has(x)));
-  for (const [k, v] of markets) legMarkets.set(k, v);
+  const legMarkets = await getMarkets(legRefs.filter((x) => !fetched.has(x) && !settledLeg(x)));
+  for (const [k, v] of fetched) legMarkets.set(k, v);
+  for (const x of legRefs) {
+    const m = legMarkets.get(x) ?? settledLeg(x);
+    if (!m) continue;
+    legMarkets.set(x, m);
+    if (SETTLED.has(m.status ?? "") && (m.result === "yes" || m.result === "no") && !settledLeg(x)) {
+      cache.set(`lg:${x}`, { ticker: m.ticker, event_ticker: m.event_ticker, title: m.title, yes_sub_title: m.yes_sub_title, status: m.status,
+        result: m.result, expected_expiration_time: m.expected_expiration_time, occurrence_datetime: m.occurrence_datetime, close_time: m.close_time } satisfies ApiMarket);
+    }
+  }
   const legEvent = (x: string) => legMarkets.get(x)?.event_ticker || x.replace(/-[^-]+$/, "");
   await getEvents(legRefs.map(legEvent), cache);
   const lookups = legRefs.filter((x) => !SETTLED.has(legMarkets.get(x)?.status ?? "") && needsMilestone(legEvent(x)));

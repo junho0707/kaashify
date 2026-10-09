@@ -1,0 +1,4 @@
+{
+  "description": "Your Kalshi positions on a calendar, with realized P&L and alerts. Connects with your own Kalshi API key and only reads.",
+  "optional_permissions": ["notifications"]
+}

@@ -14,6 +14,10 @@ export const MAX_MARKS = 400;
 
 interface Point { t: number; total: number; trade: Trade; x: number; y: number }
 
+/** How a trade is shown in the tooltip, as lines; the paid build swaps in event + picks. */
+let nameOf = (t: Trade): string[] => [t.ticker];
+export const setTradeNamer = (fn: (t: Trade) => string[]) => void (nameOf = fn);
+
 /** The drawn chart: its time window and points (sorted by time), for hover and zoom. */
 let view: { t0: number; t1: number; points: Point[] } | null = null;
 
@@ -89,7 +93,7 @@ function showTip(i: number): void {
   if (!tip || !p) return;
   const t = p.trade, io = Pnl.inOut(t);
   tip.innerHTML = `<div class="sub">${when(t.closedAt)} · ${t.result === "exited" ? "sold early" : t.result}</div>
-    <b>${esc(t.ticker)}</b>
+    ${nameOf(t).map((l, j) => (j ? `<div class="pick">${esc(l)}</div>` : `<b>${esc(l)}</b>`)).join("")}
     <div class="io"><span>In ${money(io.in)}</span><span>Out ${money(io.out)}</span><span class="${pnlCls(t.pnl)}">${signed(t.pnl)}</span></div>`;
   tip.style.left = `${Math.min(Math.max(p.x * 100, 15), 85)}%`;
   tip.style.top = `${p.y * 100}%`;

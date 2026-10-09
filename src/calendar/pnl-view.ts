@@ -17,6 +17,16 @@ const RANGES: [RangeKey, string, () => number | null][] = [
   ["ytd", "This year", () => new Date(new Date().getFullYear(), 0, 1).getTime()],
   ["all", "All time", () => null],
 ];
+/** Extension points for the paid build: extra sections under the chart, and a callback once they're on the page. */
+export const pnlHooks = {
+  /** Runs before each render (e.g. to check what's unlocked). */
+  prepare: async (): Promise<void> => {},
+  /** HTML placed under the chart for the trades in range. */
+  sections: (_trades: Trade[]): string => "",
+  /** The trades in range are drawn (empty when none are). */
+  drawn: (_trades: Trade[]): void => {},
+};
+
 const preset = () => RANGES.find(([k]) => k === prefs.pnlRange) ?? RANGES.at(-1)!;
 
 /** The custom range from zooming the chart, or null when a preset applies. */
@@ -49,7 +59,7 @@ function draw(el: HTMLElement, trades: Trade[], source: string): void {
   if (!t.length) {
     el.innerHTML = `${rangePicker()}<div class="empty">No trades closed ${zoom ? "in this range" : label === "This year" ? "this year" : `in the ${lower}`}.</div>
       <p class="sub disclaimer">${source}</p>`;
-    return;
+    return pnlHooks.drawn([]);
   }
   const s = Pnl.summary(t);
   const last = Math.max(...t.map((x) => x.closedAt));
@@ -62,7 +72,9 @@ function draw(el: HTMLElement, trades: Trade[], source: string): void {
       <div class="tile"><span>Trades</span><b>${s.count}</b><small>${from == null ? `through ${fmt.dayShort.format(last)}` : esc(lower)}</small></div>
     </div>
     <section class="pnl-sec"><h3>P&amp;L over time <span class="sub">hover for each trade${from == null ? "" : esc(` · ${lower}`)}</span></h3>${chartHtml(t, from == null ? null : { from, to }, !!zoom)}</section>
+    ${pnlHooks.sections(t)}
     <p class="sub disclaimer">From your own trade history, not trading advice. ${source}</p>`;
+  pnlHooks.drawn(t);
 }
 
 const redraw = () => shown && draw(shown.el, shown.trades, shown.source);
@@ -91,6 +103,7 @@ export function renderPnl(): Promise<void> {
 async function renderInner(): Promise<void> {
   const el = $maybe("#pnl");
   if (!el) return;
+  await pnlHooks.prepare();
   const { pnlLive = null, pnlTrades = null } = await chrome.storage.local.get(["pnlLive", "pnlTrades"]) as
     { pnlLive?: History | null; pnlTrades?: { trades: Trade[]; fileName: string } | null };
   if (pnlLive) { const d = fromLive(pnlLive); draw(el, d.trades, d.source); }

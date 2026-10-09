@@ -6,12 +6,13 @@ import { AuthError } from "../lib/kalshi.ts";
 import type { PnlLiveResult, Request } from "../lib/types.ts";
 import { toggleOverlay, type OverlayRect } from "./overlay.ts";
 import { pnlLive, refresh, removeKey, running, setKey } from "./refresh.ts";
+import { refreshWatch, watchArea, watchHandlers } from "./watch.ts";
 
-const CAL_URL = chrome.runtime.getURL("calendar.html");
+export const CAL_URL = chrome.runtime.getURL("calendar.html");
 const REFRESH_MIN = 30;
 
 /** Focuses an open calendar tab, or opens one. Asking the calendar page itself avoids the "tabs" permission. */
-async function openTab(): Promise<void> {
+export async function openTab(): Promise<void> {
   const found = await chrome.runtime.sendMessage({ type: "focus-calendar" } satisfies Request).catch(() => false);
   if (!found) await chrome.tabs.create({ url: CAL_URL });
 }
@@ -25,13 +26,15 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
+/** Handlers for a union of message types, each getting its own message shape. */
+export type Handlers<R extends { type: string }> = { [K in R["type"]]: (msg: Extract<R, { type: K }>) => Promise<unknown> };
 /** Each message type → its async handler; the result goes back to the page. */
-const handlers: { [K in Request["type"]]?: (msg: Extract<Request, { type: K }>) => Promise<unknown> } = {
-  refresh: (msg) => refresh({ interactive: !!msg.interactive }),
+const handlers: Record<string, (msg: never) => Promise<unknown>> = {
+  refresh: (msg) => refresh({ interactive: !!msg.interactive, auto: !msg.interactive }),
   "set-key": (msg) => setKey(msg.keyId, msg.pem).catch((e: Error) => ({ ok: false, error: { message: e.message } })),
   "remove-key": async () => { await removeKey(); return { ok: true }; },
   clear: async () => {
-    await Promise.all([chrome.storage.local.clear(), chrome.storage.session.clear(), Auth.clear()]);
+    await Promise.all([chrome.storage.local.clear(), chrome.storage.session.clear(), Auth.clear(), watchArea().remove("watchlist")]);
     chrome.alarms.create("refresh", { periodInMinutes: REFRESH_MIN });
     chrome.action.setBadgeText({ text: "" });
     return { ok: true };
@@ -39,10 +42,16 @@ const handlers: { [K in Request["type"]]?: (msg: Extract<Request, { type: K }>) 
   "pnl-live": () => pnlLive().then(
     (live): PnlLiveResult => ({ ok: true, live }),
     (e: Error): PnlLiveResult => ({ ok: false, auth: e instanceof AuthError, error: e.message })),
-};
+  ...watchHandlers,
+} satisfies Partial<Handlers<Request>> & typeof watchHandlers;
 
-chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse) => {
-  const handle = handlers[msg?.type] as ((m: Request) => Promise<unknown>) | undefined;
+/** Adds message handlers (the paid build's payment and Pro messages). */
+export function addHandlers<R extends { type: string }>(more: Handlers<R>): void {
+  Object.assign(handlers, more);
+}
+
+chrome.runtime.onMessage.addListener((msg: { type: string }, _sender, sendResponse) => {
+  const handle = Object.hasOwn(handlers, msg?.type) ? handlers[msg.type] as (m: unknown) => Promise<unknown> : undefined;
   if (!handle) return;
   handle(msg).then(sendResponse);
   return true; // async response
@@ -55,7 +64,7 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") chrome.tabs.create({ url: CAL_URL });
 });
 chrome.runtime.onStartup?.addListener(() => void refresh());
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === "refresh") refresh(); });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === "refresh" || a.name === "refresh-retry") refresh(); });
 
 // For the end-to-end tests and debugging from the service worker console. Pages can't reach this.
-Object.assign(globalThis, { kaashify: { refresh, setKey, removeKey, openTab, running, Auth, CAL_URL, toggleOverlay } });
+Object.assign(globalThis, { kaashify: { refresh, refreshWatch, setKey, removeKey, openTab, running, Auth, CAL_URL, toggleOverlay } });

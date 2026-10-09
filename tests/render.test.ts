@@ -1,53 +1,7 @@
-// Renders calendar.html + calendar.js in jsdom against a stored schedule.
-import { test, after } from "node:test";
+// The free calendar page (src/calendar) rendered in jsdom against a stored schedule.
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { JSDOM } from "jsdom";
-import { buildSync } from "esbuild";
-import { fileURLToPath } from "node:url";
-
-const root = new URL("..", import.meta.url);
-// The page script as the browser gets it: src/calendar bundled into one file (built once for all tests).
-const calendarBundle = buildSync({ entryPoints: [fileURLToPath(new URL("src/calendar/index.ts", root))], bundle: true, format: "iife",
-  write: false, target: "es2022" }).outputFiles[0].text;
-const H = 3600e3, MIN = 60e3;
-
-function leg(title: string, sub: string, ts: number, { outcome = "pending", exact = true, ...extra }: Record<string, any> = {}) {
-  return { ticker: title, eventTicker: `KXTEST-${sub.replace(/\W/g, "")}`, side: "yes", series: "KXTEST", title, eventTitle: sub, eventSub: sub,
-    prob: outcome === "pending" ? 0.5 : null, start: exact ? ts : null, end: ts + 3 * H, outcome, ...extra };
-}
-function item(ticker: string, legs: any[], extra: Record<string, any> = {}) {
-  return { ticker, isCombo: legs.length > 1, userSide: "yes", contracts: 10, exposure: 2, avgPrice: 0.2, cost: 2, payout: 10,
-    title: "", legs, state: legs.some((l) => l.outcome === "lost") ? "busted" : "alive", settleBy: Math.max(...legs.map((l) => l.end)), status: "active", url: null, ...extra };
-}
-
-// Each render's window has timers (the calendar refreshes every minute); close them all at the end.
-const windows = [];
-after(() => windows.forEach((w) => w.close()));
-
-// jsdom handles are loosely typed: the tests poke at whatever the page drew.
-async function render(items: any[], setup: (w: any, store: any) => void = () => {}): Promise<{ w: any; doc: any; sent: any[]; text: (sel: string) => string[] }> {
-  const html = readFileSync(new URL("extension/calendar.html", root), "utf8").replace(/<script.*<\/script>/, "");
-  const dom = new JSDOM(html, { url: "chrome-extension://test/calendar.html", runScripts: "outside-only" });
-  const w: any = dom.window;
-  windows.push(w);
-  const store = { schedule: { fetchedAt: Date.now(), items, staleAt: null, via: "page" }, lastError: null, refreshLog: [{ via: "page" }], debugCaptures: [] };
-  const sent = [];
-  w.matchMedia = () => ({ matches: false });
-  w.chrome = {
-    storage: { local: { get: async () => store }, session: { get: async () => ({ debugCaptures: [] }) }, onChanged: { addListener() {} } },
-    runtime: { id: "test", sendMessage: async (m) => (sent.push(m), {}), getManifest: () => ({ version: "test" }), onMessage: { addListener() {} } },
-  };
-  setup(w, store);
-  // One eval, like two <script> tags sharing globals.
-  w.eval(calendarBundle);
-  await new Promise((r) => setTimeout(r, 50));
-  return { w, doc: w.document, sent, text: (sel) => [...w.document.querySelectorAll(sel)].map((n) => n.textContent.replace(/\s+/g, " ").trim()) };
-}
-
-const now = Date.now();
-const today0 = new Date(); today0.setHours(0, 0, 0, 0);
-const at = (days, h) => +today0 + days * 24 * H + h * H;
+import { H, MIN, at, item, leg, now, render } from "./render-page.ts";
 
 test("Today view: summary, sections, LIVE only for real start times", async () => {
   const { doc, sent, text } = await render([
@@ -178,8 +132,8 @@ test("a finished game waiting for settlement is not LIVE", async () => {
 });
 
 test("a combo card is LIVE when any of its legs is live, even one listed on another day", async () => {
-  // First leg won at 3am today; the ongoing leg's only time is an estimate tomorrow.
-  const early = leg("Gauff", "Gauff vs Mertens", Math.min(now - H, at(0, 3)), { outcome: "won" });
+  // First leg won earlier today (between midnight and now, whatever the time); the ongoing leg's only time is an estimate tomorrow.
+  const early = leg("Gauff", "Gauff vs Mertens", (at(0, 0) + now) / 2, { outcome: "won" });
   const ongoing = { ...leg("Over 22.5", "Rune vs Altmaier", at(1, 2), { exact: false }), phase: "live" };
   const { doc } = await render([item("C", [early, ongoing])]);
   const today = doc.querySelector(".sec.today .card");

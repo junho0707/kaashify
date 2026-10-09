@@ -4,7 +4,7 @@
 
 # Kaashify
 
-**Your Kalshi positions on a calendar, plus your realized P&L. A browser extension that runs entirely in your browser.**
+**Your Kalshi positions on a calendar, your realized P&L, and alerts. A free browser extension that runs entirely in your browser.**
 
 [![CI](https://github.com/junho0707/kaashify/actions/workflows/ci.yml/badge.svg)](https://github.com/junho0707/kaashify/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/junho0707/kaashify?label=download)](https://github.com/junho0707/kaashify/releases/latest)
@@ -25,7 +25,11 @@
 - **Calendar of open positions.** Combos and single bets are placed at each leg's game time, with views for today, week, month, year and all upcoming. Each one shows **time · event · money**.
 - **Details on click.** Every leg, its odds when you bought vs. now, and what the position is worth.
 - **LIVE badges** from Kalshi's game status, plus sport tags on every position.
-- **P&L tab.** Realized P&L, fees and win rate, with a chart of every trade. Filter by **last 24 hours, 7, 14, 30 or 90 days, this year or all time**, and drag across the chart to zoom in.
+- **P&L tab.** Realized P&L, fees and win rate, with a chart of every trade. Filter by **last 24 hours, 7, 14, 30 or 90 days, this year or all time**, and drag across the chart to zoom in. Hover the chart for each trade's event and picks.
+- **Every trade in a table** with CSV export, and your P&L **broken down by sport and combo size**.
+- **Alerts** (desktop notifications while the browser is open): game starting, a leg wins or loses, a combo hits or
+  busts, odds move, and new Kalshi markets for watched teams.
+- **Watch tab.** Follow teams, players or leagues and see their upcoming games with Kalshi prices.
 - **Toolbar badge** counting legs that play today, plus light and dark themes.
 - **Read-only and private.** It uses Kalshi's official API with *your own* API key, which never leaves your browser. There's no server.
 
@@ -50,7 +54,7 @@ Works on **Chrome, Edge, Brave, Opera** and **Firefox 129+**.
 3. Click the Kaashify icon in the toolbar. A three-step setup page walks you through connecting your Kalshi API key
    (kalshi.com → Account & security → API Keys → **Create New API Key**).
 
-Store listings are coming soon.
+Kaashify isn't on the browser extension stores (their policies don't allow prediction-market tools), so install it from the release zip as above. Every feature is free.
 
 ## How it works
 
@@ -103,6 +107,7 @@ src/
     types.ts      shared data shapes and the page ↔ background messages
   background/   service worker: refresh, badge, alarm, toolbar overlay, messages
   calendar/     the page: views, details drawer, P&L tab and chart, setup, settings
+  pro/          the extras on top (all free): trade table, CSV, breakdown, readable trade names, alerts
 extension/      manifest.json, calendar.html, icons (copied into the build)
 tests/          node:test unit tests and jsdom render tests
 e2e/            Playwright tests

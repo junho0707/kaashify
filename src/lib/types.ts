@@ -71,6 +71,8 @@ export interface Schedule {
   staleAt?: number | null;
   staleReason?: string | null;
   via?: "api" | "snapshot";
+  /** When the last refresh was turned away by Kalshi's rate limit (this is the previous data; a retry is scheduled). */
+  rateLimited?: number | null;
 }
 
 /** A fill reduced to what the P&L needs. `is_yes` = the fill positioned the user for YES. */

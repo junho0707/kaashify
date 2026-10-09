@@ -7,6 +7,7 @@ import { esc, num } from "./dom.ts";
 import { type CalEvent, buildEvents, byDay, eventsOn, isLive, isOpen, isUnsettled, numbered, todayEvents } from "./events.ts";
 import { addDays, fmt, money, sameDay, startOfDay, startOfWeek, when } from "./format.ts";
 import { type ViewName, prefs, state } from "./state.ts";
+import { watchViewHtml } from "./watch-view.ts";
 
 /** Entries drawn in the current render, by their data-ev number. */
 export let evIndex: CalEvent[] = [];
@@ -85,6 +86,7 @@ interface View {
 }
 
 export const views: Record<ViewName, View> = {
+  watch: { title: () => "", step: () => state.cursor, render: watchViewHtml },
   pnl: {
     title: () => "",
     step: () => state.cursor,
@@ -190,5 +192,6 @@ export function summaryHtml(): string {
     <span><b>${combos}</b> combo${combos === 1 ? "" : "s"}</span>
     <span><b>${money(cost)}</b> in</span>
     <span>pays up to <b>${money(pay)}</b></span>
-    <span class="upd${s.staleAt ? " stale" : ""}"${why}>Updated ${fresh}</span>`;
+    <span class="upd${s.staleAt ? " stale" : ""}"${why}>Updated ${fresh}</span>${s.rateLimited
+      ? `<span class="upd stale" title="Kalshi asked Kaashify to slow down (HTTP 429). This is the last data; it retries by itself.">rate limited, retrying</span>` : ""}`;
 }

@@ -1,0 +1,71 @@
+// The Watch tab in jsdom: grouped results, "no Kalshi market yet", autocomplete and adding / removing items.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { render, wait } from "./render-page.ts";
+import { setup } from "./watch-fixtures.ts";
+
+test("Watch tab: each item's events soonest first with prices, links, and 'no market yet'", async () => {
+  const sent: any[] = [];
+  const { doc, text } = await render([], setup(sent));
+  doc.querySelector('[data-view="watch"]').click();
+  await wait(20);
+  const items = [...doc.querySelectorAll(".witem")];
+  assert.equal(items.length, 2);
+  assert.match(text(".witem h3")[0], /^Colorado Avalanche \(NHL\)/);
+  const [first, second] = [...items[0].querySelectorAll(".wev")];
+  assert.match(items[0].querySelector(".wday").textContent, /^(Today|Tomorrow)$/, "events sit under day headings (fixture is now + a few hours)");
+  assert.match(first.querySelector(".wtime").textContent, /^\d{1,2}:\d{2}/);
+  assert.equal(first.querySelector(".wtitle").textContent, "Colorado vs Calgary");
+  assert.equal(first.getAttribute("href"), "https://kalshi.com/markets/kxnhlgame/kxnhlgame-26oct08colcgy");
+  assert.match(first.getAttribute("title"), /Calgary 31¢/, "prices on hover only");
+  assert.equal(first.querySelectorAll("table").length, 0, "one line per event, no market table");
+  assert.equal(second, undefined, "only the first day shows by default");
+  const more = items[0].querySelector("[data-wmore]");
+  assert.match(more.textContent, /^\+1 more/);
+  more.click();
+  await wait(5);
+  assert.equal(items[0].querySelectorAll(".wev").length, 1, "the column stays short");
+  const modal = doc.querySelector("#wmodal");
+  assert.equal(modal.querySelectorAll(".wev").length, 2, "the popup has the whole schedule");
+  const later = modal.querySelectorAll(".wev")[1];
+  assert.match(later.querySelector(".wtime").textContent, /^~/, "an estimated date is marked");
+  assert.ok(later.classList.contains("wdim"), "no Kalshi market yet: dimmed");
+  modal.querySelector("[data-wclose]").click();
+  await wait(5);
+  assert.equal(doc.querySelector("#wmodal"), null, "× closes it");
+  assert.equal(items[1].querySelector("p").textContent, "Loading…", "no results for it yet");
+  assert.ok(sent.some((m) => m.type === "watch-refresh"), "asks the background for the missing item");
+  assert.equal(doc.querySelector(".nav").hidden, true);
+});
+
+test("Watch tab: autocomplete adds an item (Enter picks the first), × removes one", async () => {
+  const sent: any[] = [];
+  const { doc, w } = await render([], setup(sent));
+  const store = await w.chrome.storage.local.get();
+  doc.querySelector('[data-view="watch"]').click();
+  await wait(20);
+  const q = doc.querySelector("#watch-q");
+  q.dispatchEvent(new w.FocusEvent("focusin", { bubbles: true }));
+  q.value = "goalscorer";
+  q.dispatchEvent(new w.Event("input", { bubbles: true }));
+  await wait(20);
+  assert.ok(sent.some((m) => m.type === "watch-series"), "the series list loads on focus");
+  assert.match(doc.querySelector("#watch-sugg li").textContent, /Series\s+NHL Goalscorer \(KXNHLGOAL\)/);
+  q.value = "Oilers";
+  q.dispatchEvent(new w.Event("input", { bubbles: true }));
+  assert.equal(doc.querySelector("#watch-sugg").hidden, false);
+  doc.querySelector("#watch-add").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+  await wait(20);
+  assert.deepEqual([...store.watchlist].map((i: any) => String(i.id)), ["team:NHL:COL", "player:NHL:jack quinn", "team:NHL:EDM"]);
+  assert.equal(doc.querySelector("#watch-q").value, "");
+  assert.equal(doc.querySelectorAll(".witem").length, 3);
+  doc.querySelector('[data-unwatch="team:NHL:COL"]').click();
+  await wait(20);
+  assert.deepEqual([...store.watchlist].map((i: any) => String(i.id)), ["player:NHL:jack quinn", "team:NHL:EDM"]);
+  // Adding one already watched says so instead.
+  q.value = "Oilers";
+  q.dispatchEvent(new w.Event("input", { bubbles: true }));
+  doc.querySelector("#watch-sugg li").click();
+  await wait(20);
+  assert.equal(doc.querySelector("#watch-note").textContent, "Already watching that.");
+});

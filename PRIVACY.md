@@ -1,6 +1,6 @@
 # Privacy Policy: Kaashify
 
-_Last updated: 2026-10-07_
+_Last updated: 2026-10-09_
 
 **Short version: your data and your API key stay in your browser. Nothing is sent to the developer or anyone else.**
 
@@ -26,7 +26,7 @@ Kaashify only makes **read** requests (HTTP GET). It never places, changes or ca
 
 ## What it stores, and where
 
-Everything is kept only in the extension's storage in your browser:
+Everything is kept only in the extension's storage in your browser (the watchlist in the browser's sync storage):
 
 | Data | Where | How long |
 |---|---|---|
@@ -37,6 +37,9 @@ Everything is kept only in the extension's storage in your browser:
 | Trades from an imported P&L file (account ids are dropped) | local extension storage | until you remove it or clear everything |
 | Event names, start times, results and price history (public) | local extension storage | cache |
 | A log of the last 20 refreshes (time, counts, errors), with no personal data | local extension storage | rolling |
+| Your watchlist (teams, players, leagues or Kalshi tickers you added in the Watch tab) | browser sync storage (follows your browser profile if you use browser sync) | until you remove items or clear everything |
+| Watch tab results: upcoming events and their public market prices | local extension storage | replaced on each refresh |
+| Alert settings and what was already notified (so nothing repeats) | local extension storage | until changed / rolling |
 | Overlay size and position, theme | local extension storage / page storage | until changed |
 
 **Disconnect** (Settings) deletes the key. **Clear all my data** (Settings) deletes everything. Uninstalling deletes everything.
@@ -55,7 +58,8 @@ whether to send it to anyone.
 | Access to `api.elections.kalshi.com` | Kalshi's official API: your positions and fills (signed with your key) and public market data |
 | `scripting`, `activeTab` | Show the calendar over the page you're on when you click the toolbar icon |
 | `storage` | Keep the data listed above |
-| `alarms` | Refresh every 30 minutes so the toolbar badge stays current |
+| `alarms` | Refresh every 30 minutes so the toolbar badge stays current, and every minute while alerts are on |
+| `notifications` (optional) | Only requested if you turn on alerts; shows desktop notifications |
 
 ## Contact
 
